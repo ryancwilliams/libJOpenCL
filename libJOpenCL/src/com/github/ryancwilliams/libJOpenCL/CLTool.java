@@ -16,7 +16,6 @@ import java.util.logging.Logger;
 import org.lwjgl.BufferUtils;
 import org.lwjgl.PointerBuffer;
 import org.lwjgl.opencl.CL10;
-import org.lwjgl.opencl.CLEvent;
 import org.lwjgl.opencl.CLKernel;
 import org.lwjgl.opencl.CLProgram;
 import org.lwjgl.opencl.Util;
@@ -28,23 +27,26 @@ import org.lwjgl.opencl.Util;
 public abstract class CLTool {
 
     private final CLSession session;
-    private final CLKernel kernel;
+    private final CLProgram program;
+    protected final CLKernel kernel;
     protected final String name;
     protected final String path;
-    private IntBuffer errorBuffer;
+    protected IntBuffer errorBuffer;
     private PointerBuffer event;
 
     /**
      * Creates a CLTool
-     * @param session the session to run this tool on. 
+     *
+     * @param session the session to run this tool on.
      */
     public CLTool(CLSession session) {
         this(session, "", "");
     }
-    
+
     /**
      * Creates a CLTool
-     * @param session the session to run this tool on. 
+     *
+     * @param session the session to run this tool on.
      * @param name the name of the kernel.
      * @param path the path of the kernel.
      */
@@ -53,50 +55,51 @@ public abstract class CLTool {
         this.session = session;
         this.name = name;
         this.path = path;
-        
+
         //Create error buffer
         this.errorBuffer = BufferUtils.createIntBuffer(1);
-        
+
         //Create space to store events
         this.event = BufferUtils.createPointerBuffer(1);
-        
+
         //Create program
-        CLProgram program = CL10.clCreateProgramWithSource(
+        this.program = CL10.clCreateProgramWithSource(
                 this.session.getContext(), this.path, this.errorBuffer);
-        
+
         //Check for errors
         Util.checkCLError(this.errorBuffer.get(0));
-        
-        int error = CL10.clBuildProgram(program, this.session.getDevice(), "", null);
-        
+
+        int error = CL10.clBuildProgram(this.program, this.session.getDevice(), "", null);
+
         //Check for errors
         Util.checkCLError(error);
-        
+
         //Load the kernal
         this.kernel = CL10.clCreateKernel(program, this.name, this.errorBuffer);
-        
+
         //Check for errors
         Util.checkCLError(this.errorBuffer.get(0));
-        
+
     }
-    
+
     /**
      * Runs the kernel
+     *
      * @param size the size of the vectors being computed.
      */
     private void runKernel(int size) {
         final int dimensions = 1;
-        
+
         //Create pointer buffer for the dimensions.
         PointerBuffer globalWorkSize = BufferUtils.createPointerBuffer(dimensions);
-        
+
         globalWorkSize.put(size);
-        
+
         //Start running the kernel
-        CL10.clEnqueueNDRangeKernel(this.session.getQueue(), this.kernel, 
-                dimensions, null, globalWorkSize, null, null, this.event);   
+        CL10.clEnqueueNDRangeKernel(this.session.getQueue(), this.kernel,
+                dimensions, null, globalWorkSize, null, null, this.event);
     }
-    
+
     /**
      * Waits for any instances of this tool to finish
      */
@@ -104,9 +107,30 @@ public abstract class CLTool {
         //Wait for 
         CL10.clWaitForEvents(this.event);
     }
-    
+
+    /**
+     * Cleans up resources used by this tool.
+     */
+    public void closeTool() {
+        //Finsh thw queue
+        CL10.clFinish(this.session.getQueue());
+
+        //Release the kernel
+        CL10.clReleaseKernel(this.kernel);
+        CL10.clReleaseProgram(this.program);
+
+        //Release the memory
+        this.releaseMemory();
+    }
+
+    /**
+     * Cleans up memory resources used by this tool
+     */
+    protected abstract void releaseMemory();
+
     /**
      * Converts a source file into a string
+     *
      * @param path the path of the file to load
      * @return the contents of the file as a string.
      */
@@ -147,8 +171,15 @@ public abstract class CLTool {
                 }
             }
         }
-        
+
         //Return result
         return resultString;
+    }
+
+    @Override
+    protected void finalize() throws Throwable {
+        //Close the tool before garbage colection
+        this.closeTool();
+        super.finalize(); //To change body of generated methods, choose Tools | Templates.
     }
 }
